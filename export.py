@@ -10,7 +10,6 @@ import onnx
 import tensorrt as trt
 import pycuda.driver as cuda
 import pycuda.autoinit
-import cupy as cp
 
 from PIL import Image
 import random
