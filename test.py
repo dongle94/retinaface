@@ -48,10 +48,9 @@ def main():
 
     scales = [im_scale]
     flip = False
-    faces, landmarks = detector.detect(img,
-                                       thresh,
-                                       scales=scales,
-                                       do_flip=flip)
+    input_tensor, im_info = detector.preprocess_img(img, scales=scales[0], do_flip=flip)
+    net_out = detector.infer(input_tensor)
+    faces, landmarks = detector.postprocess(net_out, im_info, scales[0], threshold=thresh, do_flip=flip)
     log.info(f"** face: {faces.shape} / landmarks: {landmarks.shape}")
 
     # Do inference test
@@ -60,7 +59,9 @@ def main():
     pbar = tqdm(range(num), desc='Face detection tests')
     t0 = datetime.now()
     for _ in pbar:
-        _, _ = detector.detect(img, thresh, scales=scales, do_flip=flip)
+        input_tensor, im_info = detector.preprocess_img(img, scales=scales[0], do_flip=flip)
+        net_out = detector.infer(input_tensor)
+        faces, landmarks = detector.postprocess(net_out, im_info, scales[0], threshold=thresh, do_flip=flip)
     t1 = datetime.now() - t0
     log.info(f"** {num} times Inference Whole Time: {t1}, {num} times Inference Average Time: {t1 / num}")
 

@@ -260,6 +260,332 @@ class RetinaFace:
         data = nd.array(im_tensor)
         return data
 
+    def preprocess_img(self, img, scales=[1.0], do_flip=False):
+        timea = datetime.datetime.now()
+        flip = do_flip
+        im_scale = scales
+        if im_scale != 1.0:
+            im = cv2.resize(img,
+                            None,
+                            None,
+                            fx=im_scale,
+                            fy=im_scale,
+                            interpolation=cv2.INTER_LINEAR)
+        else:
+            im = img.copy()
+
+        if flip:
+            im = im[:, ::-1, :]
+
+        if self.nocrop:
+            if im.shape[0] % 32 == 0:
+                h = im.shape[0]
+            else:
+                h = (im.shape[0] // 32 + 1) * 32
+            if im.shape[1] % 32 == 0:
+                w = im.shape[1]
+            else:
+                w = (im.shape[1] // 32 + 1) * 32
+            _im = np.zeros((h, w, 3), dtype=np.float32)
+            _im[0:im.shape[0], 0:im.shape[1], :] = im
+            im = _im
+        else:
+            im = im.astype(np.float32)
+        if self.debug:
+            timeb = datetime.datetime.now()
+            diff = timeb - timea
+            print('X1 uses', diff.total_seconds(), 'seconds')
+
+        im_info = [im.shape[0], im.shape[1]]
+        im_tensor = np.zeros((1, 3, im.shape[0], im.shape[1]))
+        for i in range(3):
+            im_tensor[0, i, :, :] = (
+                im[:, :, 2 - i] / self.pixel_scale -
+                self.pixel_means[2 - i]) / self.pixel_stds[2 - i]
+        if self.debug:
+            timeb = datetime.datetime.now()
+            diff = timeb - timea
+            print('X2 uses', diff.total_seconds(), 'seconds')
+        data = nd.array(im_tensor)
+        db = mx.io.DataBatch(data=(data,),
+                             provide_data=[('data', data.shape)])
+        if self.debug:
+            timeb = datetime.datetime.now()
+            diff = timeb - timea
+            print('X3 uses', diff.total_seconds(), 'seconds')
+
+        return data, im_info
+
+    def infer(self, input):
+        db = mx.io.DataBatch(data=(input,),
+                             provide_data=[('data', input.shape)])
+        self.model.forward(db, is_train=False)
+        return self.model.get_outputs()
+
+    def postprocess(self, net_out, im_info, im_scale, threshold=0.5, do_flip=False):
+        proposals_list = []
+        scores_list = []
+        landmarks_list = []
+        strides_list = []
+        flip = do_flip
+        timea = datetime.datetime.now()
+
+        sym_idx = 0
+
+        for _idx, s in enumerate(self._feat_stride_fpn):
+            # if len(scales)>1 and s==32 and im_scale==scales[-1]:
+            #  continue
+            _key = 'stride%s' % s
+            stride = int(s)
+            is_cascade = False
+            if self.cascade:
+                is_cascade = True
+            # if self.vote and stride==4 and len(scales)>2 and (im_scale==scales[0]):
+            #  continue
+            # print('getting', im_scale, stride, idx, len(net_out), data.shape, file=sys.stderr)
+            scores = net_out[sym_idx].asnumpy()
+            if self.debug:
+                timeb = datetime.datetime.now()
+                diff = timeb - timea
+                print('A uses', diff.total_seconds(), 'seconds')
+            # print(scores.shape)
+            # print('scores',stride, scores.shape, file=sys.stderr)
+            scores = scores[:, self._num_anchors['stride%s' %
+                                                 s]:, :, :]
+
+            bbox_deltas = net_out[sym_idx + 1].asnumpy()
+
+            # if DEBUG:
+            #    print 'im_size: ({}, {})'.format(im_info[0], im_info[1])
+            #    print 'scale: {}'.format(im_info[2])
+
+            # _height, _width = int(im_info[0] / stride), int(im_info[1] / stride)
+            height, width = bbox_deltas.shape[
+                2], bbox_deltas.shape[3]
+
+            A = self._num_anchors['stride%s' % s]
+            K = height * width
+            anchors_fpn = self._anchors_fpn['stride%s' % s]
+            anchors = anchors_plane(height, width, stride,
+                                    anchors_fpn)
+            # print((height, width), (_height, _width), anchors.shape, bbox_deltas.shape, scores.shape, file=sys.stderr)
+            anchors = anchors.reshape((K * A, 4))
+            # print('num_anchors', self._num_anchors['stride%s'%s], file=sys.stderr)
+            # print('HW', (height, width), file=sys.stderr)
+            # print('anchors_fpn', anchors_fpn.shape, file=sys.stderr)
+            # print('anchors', anchors.shape, file=sys.stderr)
+            # print('bbox_deltas', bbox_deltas.shape, file=sys.stderr)
+            # print('scores', scores.shape, file=sys.stderr)
+
+            # scores = self._clip_pad(scores, (height, width))
+            scores = scores.transpose((0, 2, 3, 1)).reshape(
+                (-1, 1))
+
+            # print('pre', bbox_deltas.shape, height, width)
+            # bbox_deltas = self._clip_pad(bbox_deltas, (height, width))
+            # print('after', bbox_deltas.shape, height, width)
+            bbox_deltas = bbox_deltas.transpose((0, 2, 3, 1))
+            bbox_pred_len = bbox_deltas.shape[3] // A
+            # print(bbox_deltas.shape)
+            bbox_deltas = bbox_deltas.reshape((-1, bbox_pred_len))
+            bbox_deltas[:, 0::4] = bbox_deltas[:, 0::4] * self.bbox_stds[0]
+            bbox_deltas[:, 1::4] = bbox_deltas[:, 1::4] * self.bbox_stds[1]
+            bbox_deltas[:, 2::4] = bbox_deltas[:, 2::4] * self.bbox_stds[2]
+            bbox_deltas[:, 3::4] = bbox_deltas[:, 3::4] * self.bbox_stds[3]
+
+            proposals = self.bbox_pred(anchors, bbox_deltas)
+
+            # print(anchors.shape, bbox_deltas.shape, A, K, file=sys.stderr)
+            if is_cascade:
+                cascade_sym_num = 0
+                cls_cascade = False
+                bbox_cascade = False
+                __idx = [3, 4]
+                if not self.use_landmarks:
+                    __idx = [2, 3]
+                for diff_idx in __idx:
+                    if sym_idx + diff_idx >= len(net_out):
+                        break
+                    body = net_out[sym_idx + diff_idx].asnumpy()
+                    if body.shape[1] // A == 2:  # cls branch
+                        if cls_cascade or bbox_cascade:
+                            break
+                        else:
+                            cascade_scores = body[:, self.
+                                                     _num_anchors[
+                                                         'stride%s' %
+                                                         s]:, :, :]
+                            cascade_scores = cascade_scores.transpose(
+                                (0, 2, 3, 1)).reshape((-1, 1))
+                            # scores = (scores+cascade_scores)/2.0
+                            scores = cascade_scores  # TODO?
+                            cascade_sym_num += 1
+                            cls_cascade = True
+                            # print('find cascade cls at stride', stride)
+                    elif body.shape[1] // A == 4:  # bbox branch
+                        cascade_deltas = body.transpose(
+                            (0, 2, 3, 1)).reshape(
+                            (-1, bbox_pred_len))
+                        cascade_deltas[:, 0::
+                                          4] = cascade_deltas[:, 0::
+                                                                 4] * self.bbox_stds[
+                                                   0]
+                        cascade_deltas[:, 1::
+                                          4] = cascade_deltas[:, 1::
+                                                                 4] * self.bbox_stds[
+                                                   1]
+                        cascade_deltas[:, 2::
+                                          4] = cascade_deltas[:, 2::
+                                                                 4] * self.bbox_stds[
+                                                   2]
+                        cascade_deltas[:, 3::
+                                          4] = cascade_deltas[:, 3::
+                                                                 4] * self.bbox_stds[
+                                                   3]
+                        proposals = self.bbox_pred(
+                            proposals, cascade_deltas)
+                        cascade_sym_num += 1
+                        bbox_cascade = True
+                        # print('find cascade bbox at stride', stride)
+
+            proposals = clip_boxes(proposals, im_info[:2])
+
+            # if self.vote:
+            #  if im_scale>1.0:
+            #    keep = self._filter_boxes2(proposals, 160*im_scale, -1)
+            #  else:
+            #    keep = self._filter_boxes2(proposals, -1, 100*im_scale)
+            #  if stride==4:
+            #    keep = self._filter_boxes2(proposals, 12*im_scale, -1)
+            #    proposals = proposals[keep, :]
+            #    scores = scores[keep]
+
+            # keep = self._filter_boxes(proposals, min_size_dict['stride%s'%s] * im_info[2])
+            # proposals = proposals[keep, :]
+            # scores = scores[keep]
+            # print('333', proposals.shape)
+            if stride == 4 and self.decay4 < 1.0:
+                scores *= self.decay4
+
+            scores_ravel = scores.ravel()
+            # print('__shapes', proposals.shape, scores_ravel.shape)
+            # print('max score', np.max(scores_ravel))
+            order = np.where(scores_ravel >= threshold)[0]
+            # _scores = scores_ravel[order]
+            # _order = _scores.argsort()[::-1]
+            # order = order[_order]
+            proposals = proposals[order, :]
+            scores = scores[order]
+            if flip:
+                oldx1 = proposals[:, 0].copy()
+                oldx2 = proposals[:, 2].copy()
+                proposals[:, 0] = im.shape[1] - oldx2 - 1
+                proposals[:, 2] = im.shape[1] - oldx1 - 1
+
+            proposals[:, 0:4] /= im_scale
+
+            proposals_list.append(proposals)
+            scores_list.append(scores)
+            if self.nms_threshold < 0.0:
+                _strides = np.empty(shape=(scores.shape),
+                                    dtype=np.float32)
+                _strides.fill(stride)
+                strides_list.append(_strides)
+
+            if not self.vote and self.use_landmarks:
+                landmark_deltas = net_out[sym_idx + 2].asnumpy()
+                # landmark_deltas = self._clip_pad(landmark_deltas, (height, width))
+                landmark_pred_len = landmark_deltas.shape[1] // A
+                landmark_deltas = landmark_deltas.transpose(
+                    (0, 2, 3, 1)).reshape(
+                    (-1, 5, landmark_pred_len // 5))
+                landmark_deltas *= self.landmark_std
+                # print(landmark_deltas.shape, landmark_deltas)
+                landmarks = self.landmark_pred(
+                    anchors, landmark_deltas)
+                landmarks = landmarks[order, :]
+
+                if flip:
+                    landmarks[:, :,
+                    0] = im.shape[1] - landmarks[:, :,
+                                       0] - 1
+                    # for a in range(5):
+                    #  oldx1 = landmarks[:, a].copy()
+                    #  landmarks[:,a] = im.shape[1] - oldx1 - 1
+                    order = [1, 0, 2, 4, 3]
+                    flandmarks = landmarks.copy()
+                    for idx, a in enumerate(order):
+                        flandmarks[:, idx, :] = landmarks[:, a, :]
+                        # flandmarks[:, idx*2] = landmarks[:,a*2]
+                        # flandmarks[:, idx*2+1] = landmarks[:,a*2+1]
+                    landmarks = flandmarks
+                landmarks[:, :, 0:2] /= im_scale
+                # landmarks /= im_scale
+                # landmarks = landmarks.reshape( (-1, landmark_pred_len) )
+                landmarks_list.append(landmarks)
+                # proposals = np.hstack((proposals, landmarks))
+            if self.use_landmarks:
+                sym_idx += 3
+            else:
+                sym_idx += 2
+            if is_cascade:
+                sym_idx += cascade_sym_num
+
+        if self.debug:
+            timeb = datetime.datetime.now()
+            diff = timeb - timea
+            print('B uses', diff.total_seconds(), 'seconds')
+        proposals = np.vstack(proposals_list)
+        landmarks = None
+        if proposals.shape[0] == 0:
+            if self.use_landmarks:
+                landmarks = np.zeros((0, 5, 2))
+            if self.nms_threshold < 0.0:
+                return np.zeros((0, 6)), landmarks
+            else:
+                return np.zeros((0, 5)), landmarks
+        scores = np.vstack(scores_list)
+        #print('shapes', proposals.shape, scores.shape)
+        scores_ravel = scores.ravel()
+        order = scores_ravel.argsort()[::-1]
+        #if config.TEST.SCORE_THRESH>0.0:
+        #  _count = np.sum(scores_ravel>config.TEST.SCORE_THRESH)
+        #  order = order[:_count]
+        proposals = proposals[order, :]
+        scores = scores[order]
+        if self.nms_threshold < 0.0:
+            strides = np.vstack(strides_list)
+            strides = strides[order]
+        if not self.vote and self.use_landmarks:
+            landmarks = np.vstack(landmarks_list)
+            landmarks = landmarks[order].astype(np.float32, copy=False)
+
+        if self.nms_threshold > 0.0:
+            pre_det = np.hstack((proposals[:, 0:4], scores)).astype(np.float32,
+                                                                    copy=False)
+            if not self.vote:
+                keep = self.nms(pre_det)
+                det = np.hstack((pre_det, proposals[:, 4:]))
+                det = det[keep, :]
+                if self.use_landmarks:
+                    landmarks = landmarks[keep]
+            else:
+                det = np.hstack((pre_det, proposals[:, 4:]))
+                det = self.bbox_vote(det)
+        elif self.nms_threshold < 0.0:
+            det = np.hstack(
+                (proposals[:, 0:4], scores, strides)).astype(np.float32,
+                                                             copy=False)
+        else:
+            det = np.hstack((proposals[:, 0:4], scores)).astype(np.float32,
+                                                                copy=False)
+
+        if self.debug:
+            timeb = datetime.datetime.now()
+            diff = timeb - timea
+            print('C uses', diff.total_seconds(), 'seconds')
+        return det, landmarks
+
     def detect(self, img, threshold=0.5, scales=[1.0], do_flip=False):
         #print('in_detect', threshold, scales, do_flip, do_nms)
         proposals_list = []

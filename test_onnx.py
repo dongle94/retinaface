@@ -66,7 +66,9 @@ def main():
     pbar = tqdm(range(num), desc='Face detection tests')
     t0 = datetime.now()
     for _ in pbar:
-        _ = sess.run(None, {input_name: img})
+        img, im_info, im_scale = preprocess(_img)
+        pred_onnx = sess.run(output_names, {input_name: img})
+        faces, landmarks = postprocess(pred_onnx, im_info, im_scale, args.threshold)
     t1 = datetime.now() - t0
     log.info(f"** {num} times Inference Whole Time: {t1}, {num} times Inference Average Time: {t1 / num}")
 

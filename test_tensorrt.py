@@ -63,7 +63,9 @@ def main():
     pbar = tqdm(range(num), desc='Face detection tests')
     t0 = datetime.now()
     for _ in pbar:
+        img, im_info, im_scale = preprocess(inputs, _img)
         do_inference(stream, context, bindings)
+        faces, landmarks = postprocess(outs, im_info, im_scale, args.threshold)
     t1 = datetime.now() - t0
     log.info(f"** {num} times Inference Whole Time: {t1}, {num} times Inference Average Time: {t1 / num}")
 
