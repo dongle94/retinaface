@@ -49,7 +49,7 @@ def main():
     log.info(f"** Current Inference Device: {ort.get_device()}")
 
     # imread test image
-    _img = cv2.imread('t1.jpg')
+    _img = cv2.imread(args.image_file)
     img, im_info, im_scale = preprocess(_img)
 
     # Warm Up Inference
