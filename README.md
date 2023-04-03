@@ -163,7 +163,6 @@ It makes result output image named by input name example `./model/R50-mxnet.jpg`
 $ python test_onnx.py \
   -i ./model/R50.onnx \
   -f ./test_image.jpg
-  
 ```
 It makes result output image named by input name example `./model/R50-onnx.jpg`.
 
