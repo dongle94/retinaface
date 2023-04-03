@@ -26,6 +26,8 @@ def main():
     parser.add_argument('-i', '--input', type=str, help='frozen model path', default='./retinaface-0000.onnx')
     parser.add_argument('-f', '--image_file', type=str, help='image file for inference test',
                         default="t1.jpg")
+    parser.add_argument('-t', '--threshold', type=float, help='detection threshold', default=0.5)
+    parser.add_argument('-n', '--num', type=int, help='inference test num', default=1000)
     args = parser.parse_args()
 
     trt.init_libnvinfer_plugins(TRT_LOGGER, "")
@@ -51,12 +53,12 @@ def main():
     do_inference(stream, context, bindings)
     outs = [out.get() for out in outputs]
 
-    faces, landmarks = postprocess(outs, im_info, im_scale)
+    faces, landmarks = postprocess(outs, im_info, im_scale, args.threshold)
     log.info(f"** output_shape - face: {[face.shape for face in faces]}")
     log.info(f"** output_shape - landmark: {[landmark.shape for landmark in landmarks]}")
 
     # Do inference test
-    num = 1000
+    num = args.num
     log.info(f"** start inference time check {num} tries.")
     pbar = tqdm(range(num), desc='Face detection tests')
     t0 = datetime.now()
@@ -190,8 +192,8 @@ def do_inference(stream, context, bindings):
         context.execute_async_v2(bindings=bindings, stream_handle=stream.ptr)
         stream.synchronize()
 
-def postprocess(net_out, im_info, im_scale):
-    threshold = 0.5
+def postprocess(net_out, im_info, im_scale, threshold=0.9):
+    threshold = threshold
     nms_threshold = 0.4
     decay4 = 0.5
 
