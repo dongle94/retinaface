@@ -1,0 +1,19 @@
+# Train
+mxnet-cu116
+cython
+easydict
+opencv-python
+numpy~=1.23.0
+
+# Export
+pillow
+onnx
+pycuda
+#mxnet-cu116
+#opencv-python
+#tensorrt
+
+# TEST
+onnxruntime-gpu
+cupy
+#tensorrt
