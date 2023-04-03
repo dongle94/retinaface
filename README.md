@@ -148,8 +148,10 @@ $ python export.py \
 ## Testing
 There are three test scripts(`test.py`, `test_onnx.py`, `test_tensort.py`) available. 
 Each script infer their network about input and create output image.
-![](./assets/sample.jpg){: width="49%"} 
-![](./assets/sample-test.jpg){: width="49%"}
+
+<img src="./assets/sample.jpg" width=49%>
+<img src="./assets/sample-test.jpg" width=49%>
+
 ### test.py - mxnet
 ```shell
 $ python test.py \
