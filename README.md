@@ -149,8 +149,8 @@ $ python export.py \
 There are three test scripts(`test.py`, `test_onnx.py`, `test_tensort.py`) available. 
 Each script infer their network about input and create output image.
 
-<img src="./assets/sample.jpg" width=49%>
-<img src="./assets/sample-test.jpg" width=49%>
+![test image](./assets/sample-test.jpg)
+- This image is infered pretrained weight `R50-symbol.json`, `R50-0000.params`.
 
 ### test.py - mxnet
 ```shell
