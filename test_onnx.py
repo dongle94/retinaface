@@ -1,26 +1,27 @@
+import os
+import sys
 from datetime import datetime
 from tqdm import tqdm
 import onnxruntime as ort
 import numpy as np
-#import skimage.io
-#import skimage.restoration
 import cv2
 import argparse
-#import itertools
-#import time
 import logging
 from rcnn.processing.generate_anchor import generate_anchors_fpn, anchors_plane
 from rcnn.processing.nms import gpu_nms_wrapper, cpu_nms_wrapper
 
 
 logging.basicConfig(level=logging.INFO)
-
+logging.getLogger("TEST_ONNX").setLevel(logging.INFO)
+log = logging.getLogger("TEST_ONNX")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', type=str, help='frozen model path', default='./retinaface-0000.onnx')
     parser.add_argument('-f', '--image_file', type=str, help='image file for inference test',
                         default="t1.jpg")
+    parser.add_argument('-t', '--threshold', type=float, help='detection threshold', default=0.5)
+    parser.add_argument('-n', '--num', type=int, help='inference test num', default=1000)
     args = parser.parse_args()
 
     EP_list = [
@@ -38,79 +39,62 @@ def main():
     sess = ort.InferenceSession(args.input, providers=EP_list)
     input_name = sess.get_inputs()[0].name
     input_shape = sess.get_inputs()[0].shape
-    print("** Input Tensor name / shape : ", input_name, input_shape, sess.get_inputs()[0].type)
+    log.info(f"** Input Tensor name / shape : {input_name}, {input_shape}, {sess.get_inputs()[0].type}")
     output_names = [output.name for output in sess.get_outputs()]
     output_shapes = [output.shape for output in sess.get_outputs()]
     for _name, _shape in zip(output_names, output_shapes):
-        print("** Output Tensors name / shape : ", _name, _shape, sess.get_inputs()[0].type)
+        log.info(f"** Output Tensors name / shape : {_name}, {_shape}, {sess.get_inputs()[0].type}")
 
     # Check current device
-    print("** Current Inference Device: ", ort.get_device())
+    log.info(f"** Current Inference Device: {ort.get_device()}")
 
     # imread test image
     _img = cv2.imread('t1.jpg')
     img, im_info, im_scale = preprocess(_img)
-    #image = skimage.io.imread(args.image_file, as_gray=False)
-    # ocr prepare image
 
-    #img = cv2.resize(image, (640, 640), 0., 0., cv2.INTER_LINEAR)
-    #img = skimage.img_as_float(img)
-    #img = np.transpose(img, [2, 0, 1])
-    #image_np_expanded = np.array([img]).astype(np.float32)
-
-    '''
-    img = skimage.restoration.denoise_bilateral(img, win_size=3, multichannel=False, sigma_spatial=1)
-
-    img = np.fliplr(img)
-    img -= 0.5
-    img *= 2.0
-    image = np.expand_dims(img.T, 2)
-
-    image_np_expanded = np.array([image]).astype(np.float32)
-    '''
     # Warm Up Inference
     #ret = detect_faces(img, 0.8, sess)
-    print(f"** input_shape: {img.shape}")
+    log.info(f"** input_shape: {img.shape}")
     pred_onnx = sess.run(output_names, {input_name: img})
-    faces, landmarks = postprocess(pred_onnx, im_info, im_scale)
-    print(f"** output_shape - face: {[face.shape for face in faces]}")
-    print(f"** output_shape - landmark: {[landmark.shape for landmark in landmarks]}")
+    faces, landmarks = postprocess(pred_onnx, im_info, im_scale, args.threshold)
+    log.info(f"** output_shape - face: {[face.shape for face in faces]}")
+    log.info(f"** output_shape - landmark: {[landmark.shape for landmark in landmarks]}")
 
     # Do inference test
-    num = 1000
-    print(f"** start inference time check {num} tries.")
+    num = args.num
+    log.info(f"** start inference time check {num} tries.")
     pbar = tqdm(range(num), desc='Face detection tests')
     t0 = datetime.now()
     for _ in pbar:
         _ = sess.run(None, {input_name: img})
     t1 = datetime.now() - t0
-    print(f"** {num} times Inference Whole Time: {t1}, {num} times Inference Average Time: {t1 / num}")
+    log.info(f"** {num} times Inference Whole Time: {t1}, {num} times Inference Average Time: {t1 / num}")
 
     # Post process Image
     img = img[0].transpose(1, 2, 0)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     if faces is not None:
-        print('** find', faces.shape[0], 'faces')
+        log.info(f"** find {faces.shape[0]} faces")
         for i in range(faces.shape[0]):
             # print('score', faces[i][4])
-            box = faces[i].astype(np.int)
+            box = faces[i].astype(np.int32)
             # color = (255,0,0)
             color = (0, 0, 255.0)
             cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), color, 2)
             if landmarks is not None:
-                landmark5 = landmarks[i].astype(np.int)
+                landmark5 = landmarks[i].astype(np.int32)
                 # print(landmark.shape)
                 for l in range(landmark5.shape[0]):
                     color = (0, 0, 255)
                     if l == 0 or l == 3:
                         color = (0, 255, 0)
-                    cv2.circle(img, (landmark5[l][0], landmark5[l][1]), 1, color,
-                               2)
+                    cv2.circle(img, (landmark5[l][0], landmark5[l][1]), 1, color, 2)
 
-        filename = './detector_test_onnx.jpg'
-        print('**writing', filename)
+        filename = f'{os.path.splitext(args.input)[0]}-onnx.jpg'
+        log.info(f"** writing {filename}")
         cv2.imwrite(filename, img)
-    exit()
+
+    sys.exit(0)
 
 
 def preprocess(img):
@@ -177,8 +161,8 @@ def resize_image(img, sizes):
     return img, im_scale, add_w, add_h
 
 
-def postprocess(net_out, im_info, im_scale):
-    threshold = 0.9
+def postprocess(net_out, im_info, im_scale, threshold=0.9):
+    threshold = threshold
     nms_threshold = 0.4
     decay4 = 0.5
 
@@ -292,7 +276,7 @@ def bbox_pred(boxes, box_deltas):
     if boxes.shape[0] == 0:
         return np.zeros((0, box_deltas.shape[1]))
 
-    boxes = boxes.astype(np.float, copy=False)
+    boxes = boxes.astype(np.float32, copy=False)
     widths = boxes[:, 2] - boxes[:, 0] + 1.0
     heights = boxes[:, 3] - boxes[:, 1] + 1.0
     ctr_x = boxes[:, 0] + 0.5 * (widths - 1.0)
@@ -327,7 +311,7 @@ def bbox_pred(boxes, box_deltas):
 def landmark_pred(boxes, landmark_deltas):
     if boxes.shape[0] == 0:
       return np.zeros((0, landmark_deltas.shape[1]))
-    boxes = boxes.astype(np.float, copy=False)
+    boxes = boxes.astype(np.float32, copy=False)
     widths = boxes[:, 2] - boxes[:, 0] + 1.0
     heights = boxes[:, 3] - boxes[:, 1] + 1.0
     ctr_x = boxes[:, 0] + 0.5 * (widths - 1.0)
