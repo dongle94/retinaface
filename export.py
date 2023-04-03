@@ -3,64 +3,121 @@ import numpy as np
 import mxnet as mx
 import os
 
+import onnx
+import tensorrt as trt
+#import pycuda.driver as cuda
+#import pycuda.autoinit
+import cupy as cp
+import cv2
+
 class RetinaFaceCalibrator(trt.IInt8EntropyCalibrator2):
-    def __init__(self):
-        pass
-# class MNISTEntropyCalibrator(trt.IInt8EntropyCalibrator2):
-#     def __init__(self, training_data, cache_file, batch_size=64):
-#         # Whenever you specify a custom constructor for a TensorRT class,
-#         # you MUST call the constructor of the parent explicitly.
-#         trt.IInt8EntropyCalibrator2.__init__(self)
-#
-#         self.cache_file = cache_file
-#
-#         # Every time get_batch is called, the next batch of size batch_size will be copied to the device and returned.
-#         self.data = load_mnist_data(training_data)
-#         self.batch_size = batch_size
-#         self.current_index = 0
-#
-#         # Allocate enough memory for a whole batch.
-#         self.device_input = cuda.mem_alloc(self.data[0].nbytes * self.batch_size)
-#
-#     def get_batch_size(self):
-#         return self.batch_size
-#
-#     # TensorRT passes along the names of the engine bindings to the get_batch function.
-#     # You don't necessarily have to use them, but they can be useful to understand the order of
-#     # the inputs. The bindings list is expected to have the same ordering as 'names'.
-#     def get_batch(self, names):
-#         if self.current_index + self.batch_size > self.data.shape[0]:
-#             return None
-#
-#         current_batch = int(self.current_index / self.batch_size)
-#         if current_batch % 10 == 0:
-#             print("Calibrating batch {:}, containing {:} images".format(current_batch, self.batch_size))
-#
-#         batch = self.data[self.current_index: self.current_index + self.batch_size].ravel()
-#         cuda.memcpy_htod(self.device_input, batch)
-#         self.current_index += self.batch_size
-#         return [self.device_input]
-#
-#     def read_calibration_cache(self):
-#         # If there is a cache, use it instead of calibrating again. Otherwise, implicitly return None.
-#         if os.path.exists(self.cache_file):
-#             with open(self.cache_file, "rb") as f:
-#                 return f.read()
-#
-#     def write_calibration_cache(self, cache):
-#         with open(self.cache_file, "wb") as f:
-#             f.write(cache)
+    def __init__(self, training_data, cache_file="", batch_size=32):
+        trt.IInt8EntropyCalibrator2.__init__(self)
+
+        self.dataset = mx.gluon.data.vision.datasets.ImageFolderDataset(training_data)
+        self.cache_file = cache_file
+        self.batch_size = batch_size
+        self.current_index = 0
+
+        # shape = self.engine.get_binding_shape(binding)
+        # dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+        # cuda_mem = cp.zeros(shape=shape, dtype=dtype)
+        self.data = cp.zeros(shape=(self.batch_size, 3, 640, 640), dtype=cp.int8)
+        #self.data = np.zeros((self.batch_size, 3, 640, 640))
+        # self.device_input = cuda.mem_alloc(self.data[0].nbytes)
+        self.device_input = self.data.data.ptr
+        #print(self.dataset[0])
+        # exit()
+        # for k, (images, targets) in enumerate(self.dataset):
+        #     if k >= self.max_batches:
+        #         break
+        #     self.data[k] = images.numpy()
+
+    def get_batch_size(self):
+        return self.batch_size
+
+    def get_batch(self, names):
+        """Get a batch of input for calibration.
+            Args:
+                names (List[str]): list of file names
+            Returns:
+                list of device memory pointers set to the memory containing
+                each network input data, or an empty list if there are no more
+                batches for calibration
+        """
+        print('** Calibration starting...')
+        try:
+            if self.current_index + self.batch_size > self.data.shape[0]:
+                return None
+            current_batch = int(self.current_index / self.batch_size)
+            # if current_batch % self.batch_size == 0:
+            print("** Calibrating batch {:}, containing {:} images".format(current_batch, self.batch_size))
+
+            # Assume self.batches is a generator that provides batch data.
+
+            batch = self.dataset.take(self.batch_size)
+            for i in range(self.batch_size):
+                img = cv2.resize(batch[i][0].asnumpy(), (640, 640), interpolation=cv2.INTER_LINEAR)
+                img = cp.asarray(img)
+                img = cp.transpose(img, [2, 0, 1])
+                img = img.astype(cp.int8)
+                self.data[i] = img
+            # Assume that self.device_input is a device buffer allocated by the constructor.
+            #cuda.memcpy_htod(self.device_input, batch)
+            self.current_index += self.batch_size
+            return [int(self.device_input)]
+        except StopIteration:
+            # When we're out of batches, we return either [] or None.
+            # This signals to TensorRT that there is no calibration data remaining.
+            return None
+
+    def read_calibration_cache(self):
+        """Load a calibration cache. If there is a cache, use it instead of calibrating again. Otherwise, implicitly return None.
+            Returns:
+                a cache object or None if there is no data
+        """
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, "rb") as f:
+                return f.read()
+        return None
+
+    def write_calibration_cache(self, cache):
+        """Save a calibration cache.
+           Args:
+               cache (memoryview): the calibration cache to write
+        """
+        print('[Write calibration cache file]')
+        with open(self.cache_file, "wb") as f:
+            f.write(cache)
+
 
 def convert(opt):
     input_shape = [(1, 3, 640, 640)]
     input_type = [np.float32]
-    onnx_file = f"./{opt.params.split('-')[0]}.onnx"
+    onnx_file = f"{opt.params.split('-')[0]}.onnx"
 
     if os.path.exists(onnx_file):
         converted_onnx = onnx_file
         print(f"** ONNX file already exist.")
     else:
+        print(f"** Convert {onnx_file} starting")
         converted_onnx = mx.onnx.export_model(opt.symbol, opt.params, input_shape, input_type, onnx_file)
+
+        onnx_model = onnx.load(converted_onnx)
+        if onnx_model.ir_version < 4:
+            print("Model with ir_version below 4 requires to include initilizer in graph input")
+        else:
+            inputs = onnx_model.graph.input
+            name_to_input = {}
+            for input in inputs:
+                name_to_input[input.name] = input
+
+            for initializer in onnx_model.graph.initializer:
+                if initializer.name in name_to_input:
+                    inputs.remove(name_to_input[initializer.name])
+
+            onnx.save(onnx_model, converted_onnx)
+
     if opt.type == 'onnx':
         print(f"** Convert {converted_onnx} Succecss.")
         return
@@ -100,6 +157,8 @@ def convert(opt):
             if opt.fp16:
                 config.set_flag(trt.BuilderFlag.FP16)
             elif opt.int8:
+                calibration_cache = "retinaface_calibration.cache"
+                calib = RetinaFaceCalibrator(os.path.abspath(opt.calib_data), cache_file=calibration_cache)
                 config.set_flag(trt.BuilderFlag.INT8)
                 config.int8_calibrator = calib
 
@@ -129,6 +188,9 @@ def parse_args():
                         help='tensorrt engine workspace size',
                         type=int,
                         default=30)
+    parser.add_argument('--calib_data',
+                        help='tensorrt engine int8 calibration data location',
+                        type=str)
     parser.add_argument('--fp16', action='store_true', help='float point 16bits. half precision')
     parser.add_argument('--int8', action='store_true', help='int8 Quantaization')
     args = parser.parse_args()
