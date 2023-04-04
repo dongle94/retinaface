@@ -120,6 +120,7 @@ $ python export.py \
 Int8 Quntization need calibration process. 
 calibration data structure is different with train dataset. Train Set image directories have many sub dirs.
 Calibration dataset have one directory and images.
+You can use `utils/create_calib_set.py` to copy images from multiple directories of train datasets to one directory of calibration dataset. 
 ```shell
 data/retinaface
 └── calib
