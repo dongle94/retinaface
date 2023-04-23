@@ -368,10 +368,10 @@ def train_net(args,
 
         if mbatch % iter_per_epoch == 0:
             print('saving checkpoint', mbatch, file=sys.stderr)
-            save_model(mbatch / iter_per_epoch)
+            save_model(mbatch / iter_per_epoch - 1)
         if mbatch == lr_steps[-1][0]:
             print('saving final checkpoint', mbatch, file=sys.stderr)
-            save_model(mbatch / iter_per_epoch)
+            save_model(mbatch / iter_per_epoch - 1)
             #arg, aux = mod.get_params()
             #mx.model.save_checkpoint(prefix, 99, mod.symbol, arg, aux)
             sys.exit(0)
