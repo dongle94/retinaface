@@ -244,9 +244,9 @@ class EngineCalibrator(trt.IInt8EntropyCalibrator2):
 
 
 def convert(opt):
-    input_shape = [(1, 3, 640, 640)]
+    input_shape = [(1, 3, opt.input_height, opt.input_width)]
     input_type = [np.float32]
-    onnx_file = f"{opt.params.split('-')[0]}.onnx"
+    onnx_file = f"{opt.symbol.split('-symbol')[0]}-{opt.input_height}p.onnx"
 
     if os.path.exists(onnx_file):
         converted_onnx = onnx_file
@@ -276,7 +276,7 @@ def convert(opt):
         return
     elif opt.type == 'tensorrt':
         import tensorrt as trt
-        trt_engine_path = f"{opt.params.split('-')[0]}.engine"
+        trt_engine_path = f"{opt.symbol.split('-symbol')[0]}-{opt.input_height}p"
 
         TRT_LOGGER = trt.Logger(trt.Logger.INFO)
         trt.init_libnvinfer_plugins(TRT_LOGGER, 'RetinaFace')
@@ -308,14 +308,15 @@ def convert(opt):
             config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << opt.workspace_size)
             config.set_tactic_sources(1 << int(trt.TacticSource.CUBLAS) | 1 << int(trt.TacticSource.CUBLAS_LT) | 1 << int(trt.TacticSource.CUDNN))
             if opt.fp16:
+                trt_engine_path += '-fp16'
                 config.set_flag(trt.BuilderFlag.FP16)
             elif opt.int8:
+                trt_engine_path += '-int8'
                 config.set_flag(trt.BuilderFlag.INT8)
 
                 inputs = [network.get_input(i) for i in range(network.num_inputs)]
 
                 calib_cache = opt.calib_cache
-                #calib = RetinaFaceCalibrator(os.path.abspath(opt.calib_input), cache_file=calibration_cache)
                 calib = EngineCalibrator(cache_file=calib_cache)
                 config.int8_calibrator = calib
                 if calib_cache is None or not os.path.exists(calib_cache):
@@ -330,9 +331,10 @@ def convert(opt):
                                      exact_batches=True,
                                      shuffle_files=True)
                     )
-
+            else:
+                trt_engine_path += '-fp32'
             plan = builder.build_serialized_network(network, config)
-            with open(trt_engine_path, "wb") as f:
+            with open(trt_engine_path + ".engine", "wb") as f:
                 f.write(plan)
 
 
@@ -357,6 +359,14 @@ def parse_args():
                         help='tensorrt engine workspace size',
                         type=int,
                         default=30)
+    parser.add_argument('--input_width',
+                        help='static input width onnx',
+                        type=int,
+                        default=640)
+    parser.add_argument('--input_height',
+                        help='static input height onnx',
+                        type=int,
+                        default=640)
     parser.add_argument('--calib_input',
                         help='tensorrt engine int8 calibration data location',
                         type=str)
