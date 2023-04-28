@@ -17,8 +17,7 @@ from ..config import config
 
 class retinaface(IMDB):
     def __init__(self, image_set, root_path, data_path):
-        super(retinaface, self).__init__('retinaface', image_set, root_path,
-                                         data_path)
+        super(retinaface, self).__init__('retinaface', image_set, root_path, data_path)
         #assert image_set=='train'
 
         split = image_set
@@ -42,7 +41,7 @@ class retinaface(IMDB):
             assert name is not None
             assert name in self._fp_bbox_map
             self._fp_bbox_map[name].append(line)
-        print('origin image size', len(self._fp_bbox_map))
+        print('** origin image size', len(self._fp_bbox_map))
 
         #self.num_images = len(self._image_paths)
         #self._image_index = range(len(self._image_paths))
@@ -52,11 +51,11 @@ class retinaface(IMDB):
     def gt_roidb(self):
         cache_file = os.path.join(
             self.cache_path,
-            '{}_{}_gt_roidb.pkl'.format(self.name, self._split))
+            f'{self.name}_{self._split}_gt_roidb.pkl')
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as fid:
                 roidb = pickle.load(fid)
-            print('{} gt roidb loaded from {}'.format(self.name, cache_file))
+            print(f'** {self.name} gt roidb loaded from {cache_file}')
             self.num_images = len(roidb)
             return roidb
 
@@ -75,16 +74,16 @@ class retinaface(IMDB):
                 roi = {'image': image_path}
                 roidb.append(roi)
                 continue
-            boxes = np.zeros([len(self._fp_bbox_map[fp]), 4], np.float)
-            landmarks = np.zeros([len(self._fp_bbox_map[fp]), 5, 3], np.float)
-            blur = np.zeros((len(self._fp_bbox_map[fp]), ), np.float)
+
+            boxes = np.zeros([len(self._fp_bbox_map[fp]), 4], np.float32)
+            landmarks = np.zeros([len(self._fp_bbox_map[fp]), 5, 3], np.float32)
+            blur = np.zeros((len(self._fp_bbox_map[fp]), ), np.float32)
             boxes_mask = []
 
             gt_classes = np.ones([len(self._fp_bbox_map[fp])], np.int32)
-            overlaps = np.zeros([len(self._fp_bbox_map[fp]), 2], np.float)
+            overlaps = np.zeros([len(self._fp_bbox_map[fp]), 2], np.float32)
 
-            imsize = cv2.imread(os.path.join(self._imgs_path,
-                                             fp)).shape[0:2][::-1]
+            imsize = cv2.imread(os.path.join(self._imgs_path, fp)).shape[0:2][::-1]
             ix = 0
 
             for aline in self._fp_bbox_map[fp]:
@@ -103,14 +102,10 @@ class retinaface(IMDB):
                     continue
 
                 if config.BBOX_MASK_THRESH > 0:
-                    if (
-                            x2 - x1
-                    ) < config.BBOX_MASK_THRESH or y2 - y1 < config.BBOX_MASK_THRESH:
+                    if x2 - x1 < config.BBOX_MASK_THRESH or y2 - y1 < config.BBOX_MASK_THRESH:
                         boxes_mask.append(np.array([x1, y1, x2, y2], np.float))
                         continue
-                if (
-                        x2 - x1
-                ) < config.TRAIN.MIN_BOX_SIZE or y2 - y1 < config.TRAIN.MIN_BOX_SIZE:
+                if x2 - x1 < config.TRAIN.MIN_BOX_SIZE or y2 - y1 < config.TRAIN.MIN_BOX_SIZE:
                     continue
 
                 boxes[ix, :] = np.array([x1, y1, x2, y2], np.float)
@@ -119,8 +114,8 @@ class retinaface(IMDB):
                                         dtype=np.float32).reshape((5, 3))
                     for li in range(5):
                         #print(landmark)
-                        if landmark[li][0] == -1. and landmark[li][
-                                1] == -1.:  #missing landmark
+                        if landmark[li][0] == -1. and landmark[li][1] == -1.:
+                            #missing landmark
                             assert landmark[li][2] == -1
                         else:
                             assert landmark[li][2] >= 0
@@ -178,12 +173,12 @@ class retinaface(IMDB):
         for roi in roidb:
             roi['max_num_boxes'] = max_num_boxes
         self.num_images = len(roidb)
-        print('roidb size', len(roidb))
-        print('non attr box num', nonattr_box_num)
-        print('landmark num', landmark_num)
+        print('** roidb size', len(roidb))
+        print('** non attr box num', nonattr_box_num)
+        print('** landmark num', landmark_num)
         with open(cache_file, 'wb') as fid:
             pickle.dump(roidb, fid, pickle.HIGHEST_PROTOCOL)
-        print('wrote gt roidb to {}'.format(cache_file))
+        print('** wrote gt roidb to {}'.format(cache_file))
 
         return roidb
 
