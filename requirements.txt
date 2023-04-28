@@ -1,5 +1,5 @@
 # Train
-mxnet-cu116
+mxnet-cu116==1.9.1
 cython
 easydict
 opencv-python
