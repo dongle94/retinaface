@@ -1,7 +1,8 @@
 import os
 import shutil
 
-cur_path = os.path.abspath(os.getcwd())
+cur_path = os.path.dirname(os.path.abspath(__file__))
+
 trainset_path = os.path.join(cur_path, '../data/retinaface/train/images')
 calibset_path = os.path.join(cur_path, '../data/retinaface/calib/images')
 
