@@ -11,7 +11,6 @@ import json
 
 from ..logger import logger
 from .imdb import IMDB
-from .ds_utils import unique_boxes, filter_small_boxes
 from ..config import config
 
 
@@ -151,10 +150,11 @@ class retinaface(IMDB):
             with open(image_path, 'rb') as fin:
                 stream = fin.read()
             stream = np.fromstring(stream, dtype=np.uint8)
-
+            img_arr = cv2.imdecode(stream, cv2.IMREAD_COLOR)
             roi = {
                 'image': image_path,
                 'stream': stream,
+                'img_arr': img_arr,
                 'height': imsize[1],
                 'width': imsize[0],
                 'boxes': boxes,
