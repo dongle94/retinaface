@@ -668,6 +668,8 @@ class RetinaFace:
                         # if self.vote and stride==4 and len(scales)>2 and (im_scale==scales[0]):
                         #     continue
                         # print('getting', im_scale, stride, idx, len(net_out), data.shape, file=sys.stderr)
+
+                        # class score idx 0, n, 2n
                         scores = net_out[sym_idx].asnumpy()
                         if self.debug:
                             timeb = datetime.datetime.now()
@@ -675,24 +677,18 @@ class RetinaFace:
                             print('A uses', diff.total_seconds(), 'seconds')
                         # print(scores.shape)
                         # print('scores',stride, scores.shape, file=sys.stderr)
-                        scores = scores[:, self._num_anchors['stride%s' %
-                                                             s]:, :, :]
-
+                        scores = scores[:, self._num_anchors['stride%s' % s]:, :, :]
+                        # boxes coordinates idx 1, n+1, 2n+1
                         bbox_deltas = net_out[sym_idx + 1].asnumpy()
-
-                        # if DEBUG:
-                        #    print 'im_size: ({}, {})'.format(im_info[0], im_info[1])
-                        #    print 'scale: {}'.format(im_info[2])
-
+                        if self.debug:
+                            print(f'im_size: ({im_info[0]}, {im_info[1]}')
+                            print(f'scale: {im_info[2]}')
                         # _height, _width = int(im_info[0] / stride), int(im_info[1] / stride)
-                        height, width = bbox_deltas.shape[
-                            2], bbox_deltas.shape[3]
-
+                        height, width = bbox_deltas.shape[2], bbox_deltas.shape[3]
                         A = self._num_anchors['stride%s' % s]
                         K = height * width
                         anchors_fpn = self._anchors_fpn['stride%s' % s]
-                        anchors = anchors_plane(height, width, stride,
-                                                anchors_fpn)
+                        anchors = anchors_plane(height, width, stride, anchors_fpn)
                         # print((height, width), (_height, _width), anchors.shape, bbox_deltas.shape, scores.shape, file=sys.stderr)
                         anchors = anchors.reshape((K * A, 4))
                         # print('num_anchors', self._num_anchors['stride%s'%s], file=sys.stderr)
@@ -703,9 +699,7 @@ class RetinaFace:
                         # print('scores', scores.shape, file=sys.stderr)
 
                         # scores = self._clip_pad(scores, (height, width))
-                        scores = scores.transpose((0, 2, 3, 1)).reshape(
-                            (-1, 1))
-
+                        scores = scores.transpose((0, 2, 3, 1)).reshape((-1, 1))
                         # print('pre', bbox_deltas.shape, height, width)
                         # bbox_deltas = self._clip_pad(bbox_deltas, (height, width))
                         # print('after', bbox_deltas.shape, height, width)
@@ -717,9 +711,7 @@ class RetinaFace:
                         bbox_deltas[:, 1::4] = bbox_deltas[:, 1::4] * self.bbox_stds[1]
                         bbox_deltas[:, 2::4] = bbox_deltas[:, 2::4] * self.bbox_stds[2]
                         bbox_deltas[:, 3::4] = bbox_deltas[:, 3::4] * self.bbox_stds[3]
-
                         proposals = self.bbox_pred(anchors, bbox_deltas)
-
                         # print(anchors.shape, bbox_deltas.shape, A, K, file=sys.stderr)
                         if is_cascade:
                             cascade_sym_num = 0
@@ -774,7 +766,6 @@ class RetinaFace:
                                     #print('find cascade bbox at stride', stride)
 
                         proposals = clip_boxes(proposals, im_info[:2])
-
                         # if self.vote:
                         #  if im_scale>1.0:
                         #    keep = self._filter_boxes2(proposals, 160*im_scale, -1)
@@ -801,6 +792,7 @@ class RetinaFace:
                         # order = order[_order]
                         proposals = proposals[order, :]
                         scores = scores[order]
+
                         if flip:
                             oldx1 = proposals[:, 0].copy()
                             oldx2 = proposals[:, 2].copy()
