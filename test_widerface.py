@@ -242,7 +242,7 @@ def test(args):
                           file=sys.stderr)
 
                     # Write inference result to txt file
-                    if i % 10 == 0:
+                    if i % 10 == 0 or i == len(roidb) - 1:
                         f.write(
                             f"{[i]} mAP 0.5: {map50:.4f} / mAR 0.5: {mar50:.4f} / mAP 0.5:0.95: {map5095:.4f} / mAR 0.5:0.95: {mar5095:.4f}\n")
 
